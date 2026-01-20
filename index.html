@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Gravity Flip</title>
+<style>
+body { margin: 0; background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: Arial, sans-serif; }
+canvas { border: 1px solid #333; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = 800;
+canvas.height = 600;
+
+const PLAYER_SIZE = 20;
+const PLAYER_X = 200;
+const GRAVITY = 0.5;
+const TERMINAL_VELOCITY = 8;
+const FLIP_VELOCITY = -10;
+const OBSTACLE_WIDTH = 40;
+const OBSTACLE_SPEED = 3;
+const OBSTACLE_SPAWN_INTERVAL = 180;
+const GAP_BASE = 150;
+const GAP_MIN = 75;
+const SCORE_TICK_FRAMES = 6;
+
+let audioCtx;
+let playerY = 300, playerVY = 0, playerRotation = 0, gravityDirection = 1;
+let obstacles = [];
+let score = 0, scoreTimer = 0, highScore = parseInt(localStorage.getItem('highScore') || '0');
+let gameOver = false, flipInput = false, firstPlay = true, frameCount = 0, lastGapTop = false;
+
+function playSound(freq, type = 'sine', duration = 0.1, volume = 0.1) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function handleInput() {
+  if (!audioCtx) {
+    audioCtx = new AudioContext();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  if (gameOver) {
+    playerY = 300;
+    playerVY = 0;
+    gravityDirection = 1;
+    obstacles = [];
+    score = 0;
+    frameCount = 0;
+    scoreTimer = 0;
+    gameOver = false;
+    firstPlay = false;
+    return;
+  }
+
+  flipInput = true;
+  firstPlay = false;
+}
+
+document.addEventListener('keydown', handleInput);
+document.addEventListener('click', handleInput);
+
+function update() {
+  requestAnimationFrame(update);
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (gameOver) {
+    ctx.fillStyle = '#FFF';
+    ctx.font = '48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2);
+    ctx.font = '24px Arial';
+    ctx.fillText('Score: ' + score, canvas.width / 2, canvas.height / 2 + 40);
+    ctx.fillText('Best: ' + highScore, canvas.width / 2, canvas.height / 2 + 80);
+    ctx.fillText('Press any key to restart', canvas.width / 2, canvas.height / 2 + 120);
+    return;
+  }
+
+  if (flipInput) {
+    gravityDirection *= -1;
+    playerVY = FLIP_VELOCITY * gravityDirection;
+    playSound(gravityDirection < 0 ? 440 : 220);
+    flipInput = false;
+  }
+
+  playerVY += GRAVITY * gravityDirection;
+  if (Math.abs(playerVY) > TERMINAL_VELOCITY) {
+    playerVY = playerVY > 0 ? TERMINAL_VELOCITY : -TERMINAL_VELOCITY;
+  }
+  playerY += playerVY;
+
+  if (playerY > canvas.height - PLAYER_SIZE) {
+    playerY = canvas.height - PLAYER_SIZE;
+    playerVY = 0;
+  }
+  if (playerY < 0) {
+    playerY = 0;
+    playerVY = 0;
+  }
+
+  playerRotation = playerVY * 2;
+
+  frameCount++;
+  scoreTimer++;
+  if (scoreTimer >= SCORE_TICK_FRAMES) {
+    score++;
+    scoreTimer = 0;
+  }
+
+  if (frameCount % OBSTACLE_SPAWN_INTERVAL === 0) {
+    const gapHeight = Math.max(GAP_BASE - score * 0.05, GAP_MIN);
+    const gapY = lastGapTop ? canvas.height - gapHeight - 50 : 50;
+    obstacles.push({ x: canvas.width, gapY, gapHeight });
+    lastGapTop = !lastGapTop;
+  }
+
+  obstacles.forEach(obs => {
+    obs.x -= OBSTACLE_SPEED;
+  });
+  obstacles = obstacles.filter(obs => obs.x > -OBSTACLE_WIDTH);
+
+  obstacles.forEach(obs => {
+    if (PLAYER_X + PLAYER_SIZE > obs.x && PLAYER_X < obs.x + OBSTACLE_WIDTH) {
+      if (playerY < obs.gapY || playerY + PLAYER_SIZE > obs.gapY + obs.gapHeight) {
+        gameOver = true;
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem('highScore', highScore.toString());
+        }
+        playSound(80, 'sawtooth', 0.3, 0.2);
+      }
+    }
+  });
+
+  ctx.strokeStyle = '#FFF';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(canvas.width, 0);
+  ctx.moveTo(0, canvas.height);
+  ctx.lineTo(canvas.width, canvas.height);
+  ctx.stroke();
+
+  ctx.fillStyle = '#FFF';
+  obstacles.forEach(obs => {
+    ctx.fillRect(obs.x, 0, OBSTACLE_WIDTH, obs.gapY);
+    ctx.fillRect(obs.x, obs.gapY + obs.gapHeight, OBSTACLE_WIDTH, canvas.height);
+  });
+
+  ctx.save();
+  ctx.translate(PLAYER_X + PLAYER_SIZE / 2, playerY + PLAYER_SIZE / 2);
+  ctx.rotate(playerRotation * Math.PI / 180);
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = '#0FF';
+  ctx.fillStyle = '#0FF';
+  ctx.fillRect(-PLAYER_SIZE / 2, -PLAYER_SIZE / 2, PLAYER_SIZE, PLAYER_SIZE);
+  ctx.restore();
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#FFF';
+  ctx.font = '24px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText('Score: ' + score, 20, 40);
+  ctx.fillText('Best: ' + highScore, 20, 70);
+
+  if (firstPlay && frameCount < 300) {
+    ctx.fillStyle = 'rgba(255, 255, 255, ' + (1 - frameCount / 300) + ')';
+    ctx.font = '32px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('PRESS ANY KEY TO FLIP', canvas.width / 2, canvas.height / 2);
+  }
+}
+
+update();
+</script>
+</body>
+</html>
